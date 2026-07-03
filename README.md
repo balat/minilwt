@@ -55,27 +55,52 @@ let on_resolve p f = match p.state with
   | Waiting waiters -> p.state <- Waiting (f :: waiters)
 ```
 
-## Slide 4 — The scheduler, minimally
+## Slide 4 — Two ways to suspend: `sleep` and `yield`
 
-Also shared by all three: a queue of ready tasks (for `yield`) and a list of
-timers (for `sleep`). `run` drains the ready queue, otherwise fires the earliest
-timer, until the main promise is `Done`.
+Shared by all three: a queue of ready tasks (for `yield`) and a list of timers
+(for `sleep`). Each returns a pending promise and schedules its own wake-up.
 
 ```ocaml
-let ready = Queue.create ()
-let timers = ref []
+let ready  = Queue.create ()   (* tasks from yield *)
+let timers = ref []            (* (deadline, wake) for sleep *)
 
-let sleep delay =
+let sleep delay =              (* resolves after [delay] seconds *)
   let p = { state = Waiting [] } in
   timers := (Unix.gettimeofday () +. delay, fun () -> wakeup p ()) :: !timers;
   p
+
+let yield () =                 (* resolves on the next tick *)
+  let p = { state = Waiting [] } in
+  Queue.add (fun () -> wakeup p ()) ready;
+  p
 ```
 
-## Slide 5 — Version 1: classic monadic (`minilwt.ml`)
+## Slide 5 — The run loop (`run`)
+
+Also shared by all three. `run` drains the ready queue; when it is empty, it
+sleeps until the earliest timer is due and fires it; it stops when the main
+promise is `Done`.
+
+```ocaml
+let rec run p = match p.state with
+  | Done v -> v
+  | Waiting _ ->
+      (if not (Queue.is_empty ready) then Queue.pop ready ()
+       else match List.sort (fun (a, _) (b, _) -> compare a b) !timers with
+         | [] -> failwith "run: nothing left to run"
+         | (t, wake) :: rest ->
+             timers := rest;
+             let dt = t -. Unix.gettimeofday () in
+             if dt > 0. then Unix.sleepf dt;
+             wake ());
+      run p
+```
+
+## Slide 6 — Version 1: classic monadic (`minilwt.ml`)
 
 `bind` posts a callback and **returns a fresh result promise at once**. The
 caller keeps running, so sibling branches all start: this is Lwt's *implicit
-concurrency*. No effects anywhere. `run : 'a t -> 'a`.
+concurrency*. No effects anywhere. `run : 'a t -> 'a` takes the promise directly.
 
 ```ocaml
 let bind p f =
@@ -88,10 +113,12 @@ let ( let* ) = bind
 
 A chain of `bind`s is a chain of callbacks, fired as promises resolve.
 
-## Slide 6 — Enter effects
+## Slide 7 — Enter effects
 
-OCaml 5 lets you **`perform` an effect** to suspend the current computation; a
-**handler** decides what to do with the captured continuation `k`.
+OCaml 5 lets you **`perform` an effect** to suspend the current fiber; a
+**handler** decides what to do with the captured continuation `k`. Since OCaml
+5.3 a handler is written as an ordinary `match`, whose three kinds of cases map
+one-to-one to the `{ retc; exnc; effc }` handler record:
 
 ```ocaml
 type _ Effect.t += Await : 'a t -> 'a Effect.t | Yield : unit Effect.t
@@ -99,13 +126,42 @@ type _ Effect.t += Await : 'a t -> 'a Effect.t | Yield : unit Effect.t
 let await p = match p.state with
   | Done v -> v
   | Waiting _ -> Effect.perform (Await p)
+
+(* a handler is just a match: *)
+match compute () with
+| v            -> ...    (* retc: normal result *)
+| exception e  -> ...    (* exnc: an exception (omitted below => propagates) *)
+| effect E, k  -> ...    (* effc: effect E, with its continuation k *)
 ```
 
-The handler, on `Await p`, registers a waiter that re-enqueues `continue k v`
-once `p` resolves; each fiber runs under it (via `Effect.Deep.match_with`). Now
-`bind` can be written a new way...
+Resuming `k` re-enters the computation under that same handler.
 
-## Slide 7 — Version 2: effects, but it breaks the semantics (`minilwt_eff_break.ml`)
+## Slide 8 — The effect `run`: running fibers
+
+The effect cores reuse the **exact same ready/timers loop** as version 1. They
+only add a fiber wrapper around `main`, whose handler is written with the
+`match ... with effect ...` syntax. So `run` takes `unit -> 'a t` (not `'a t`):
+the awaits must happen *inside* the fiber.
+
+```ocaml
+let run main =                       (* run : (unit -> 'a t) -> 'a *)
+  let result = ref None in
+  let fiber () =
+    match result := Some (await (main ())) with
+    | () -> ()                       (* main resolved *)
+    | effect Await p, k ->           (* park k; resume when p resolves *)
+        on_resolve p (fun v -> Queue.add (fun () -> Effect.Deep.continue k v) ready)
+    | effect Yield, k ->
+        Queue.add (fun () -> Effect.Deep.continue k ()) ready
+  in
+  Queue.add fiber ready;
+  loop ();                           (* the SAME ready/timers loop as V1 *)
+  match !result with Some v -> v | None -> failwith "run: deadlock"
+```
+
+The three `match` cases *are* the whole handler: no record, no GADT annotation.
+
+## Slide 9 — Version 2: effects, but it breaks the semantics (`minilwt_eff_break.ml`)
 
 ```ocaml
 let bind p f = f (await p)
@@ -119,7 +175,7 @@ not return until `p` resolves. So `both (a >>= f) (b >>= g)` cannot start `b`
 until `a` is finished. The branches run **in series**. Implicit concurrency is
 silently lost.
 
-## Slide 8 — The bug, on the clock
+## Slide 10 — The bug, on the clock
 
 `demo_eff.ml` runs `both (task "a" 0.15) (task "b" 0.15)`, two tasks that each
 `sleep` then print:
@@ -127,7 +183,7 @@ silently lost.
 - `minilwt_eff_break.ml`: about **0.30 s** (a, then b) — serialised.
 - classic Lwt would run them together, in about 0.15 s.
 
-## Slide 9 — Version 3: effects, semantics preserved ("mbind") (`minilwt_eff_keep.ml`)
+## Slide 11 — Version 3: effects, semantics preserved ("mbind") (`minilwt_eff_keep.ml`)
 
 Same effect machinery as version 2. But `bind` is **byte-for-byte the classic
 callback bind of version 1**:
@@ -143,7 +199,7 @@ Non-blocking again, so concurrency is preserved: `both` takes about **0.15 s**.
 And `await` is still available as an **opt-in, direct-style escape hatch** (for
 loops, native `try/with`, real backtraces) that `bind` itself never uses.
 
-## Slide 10 — Side by side
+## Slide 12 — Side by side
 
 ```ocaml
 (* classic (V1) and effects-preserving (V3): same bind *)
@@ -156,7 +212,7 @@ let bind p f =
 let bind p f = f (await p)
 ```
 
-| | V1 classic | V2 effects, broken | V3 effects, preserved |
+| | V1 classic | V2 broken | V3 preserved |
 |---|---|---|---|
 | `bind` | callback | `f (await p)` | callback (= V1) |
 | implicit concurrency | preserved | **broken** | preserved |
@@ -164,7 +220,7 @@ let bind p f = f (await p)
 | `yield` | `unit -> unit t` | `unit -> unit` | `unit -> unit` |
 | direct-style `await` | no | yes (it *is* bind) | yes (opt-in) |
 
-## Slide 11 — Takeaways
+## Slide 13 — Takeaways
 
 - The **preserving** effect `bind` *is* the classic `bind`. Effects do not
   replace the monad; they add a direct-style `await` escape hatch and a lean
@@ -175,7 +231,7 @@ let bind p f = f (await p)
 - This is the boiled-down teaching model of a larger experiment: a full
   effects-based Lwt core with an io_uring back end.
 
-## Slide 12 — Run it
+## Slide 14 — Run it
 
 ```sh
 cat minilwt.ml            demo.ml     | ocaml -I +unix unix.cma -stdin

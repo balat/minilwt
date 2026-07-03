@@ -113,7 +113,7 @@
   </section>
 
   <section>
-    <div class="kicker">Slide 2 — Why</div>
+    <div class="kicker">Motivation</div>
     <h2>Why compare?</h2>
     <ul>
       <li>Lwt is <span class="em">promises + a monadic <code class="inl">bind</code></span>. The type <code class="inl">'a Lwt.t</code> marks, in the signature, that a function is asynchronous.</li>
@@ -123,7 +123,7 @@
   </section>
 
   <section>
-    <div class="kicker">Slide 3 — Shared by all three</div>
+    <div class="kicker">Shared core — the promise</div>
     <h2>A promise, minimally</h2>
     <pre><code class="block">type 'a t = { mutable state : 'a state }
 and 'a state = Done of 'a | Waiting of ('a -&gt; unit) list
@@ -143,23 +143,44 @@ let on_resolve p f = match p.state with
   </section>
 
   <section>
-    <div class="kicker">Slide 4 — Shared by all three</div>
-    <h2>The scheduler, minimally</h2>
+    <div class="kicker">Shared core — sleep &amp; yield</div>
+    <h2>Two ways to suspend</h2>
     <pre><code class="block">let ready  = Queue.create ()   <span class="cmt">(* tasks from yield *)</span>
 let timers = ref []            <span class="cmt">(* (deadline, wake) for sleep *)</span>
 
-let sleep delay =
+let sleep delay =              <span class="cmt">(* resolves after [delay] seconds *)</span>
   let p = { state = Waiting [] } in
   timers := (Unix.gettimeofday () +. delay, fun () -&gt; wakeup p ()) :: !timers;
+  p
+
+let yield () =                 <span class="cmt">(* resolves on the next tick *)</span>
+  let p = { state = Waiting [] } in
+  Queue.add (fun () -&gt; wakeup p ()) ready;
   p</code></pre>
-    <ul>
-      <li><code class="inl">run</code> drains the <span class="em">ready</span> queue; when it is empty, it fires the <span class="em">earliest timer</span>; it stops when the main promise is <code class="inl">Done</code>.</li>
-    </ul>
+    <p class="caption">Each returns a pending promise and schedules its own wake-up.</p>
   </section>
 
   <section>
-    <div class="kicker">Slide 5 — Version 1</div>
-    <h2>Classic monadic <span class="tag">minilwt.ml</span></h2>
+    <div class="kicker">Shared core — the run loop</div>
+    <h2>Where it all turns: <code class="inl" style="font-size:.7em">run</code></h2>
+    <pre><code class="block">let rec run p = match p.state with
+  | Done v -&gt; v                          <span class="cmt">(* main promise resolved: return it *)</span>
+  | Waiting _ -&gt;
+<span class="hl">      (if not (Queue.is_empty ready) then Queue.pop ready ()   (* a ready task *)</span>
+       else match List.sort (fun (a,_) (b,_) -&gt; compare a b) !timers with
+         | [] -&gt; failwith "run: nothing left to run"
+         | (t, wake) :: rest -&gt;          <span class="cmt">(* else the earliest timer *)</span>
+             timers := rest;
+             let dt = t -. Unix.gettimeofday () in
+             if dt &gt; 0. then Unix.sleepf dt;
+             wake ());
+      run p</code></pre>
+    <p class="caption">Ready tasks first; otherwise sleep until the nearest timer. The very same loop drives all three cores.</p>
+  </section>
+
+  <section>
+    <div class="kicker">Version 1 — classic monadic</div>
+    <h2>Callbacks, no effects <span class="tag">minilwt.ml</span></h2>
     <pre><code class="block">let bind p f =
   let r = { state = Waiting [] } in
 <span class="hl">  on_resolve p (fun v -&gt; on_resolve (f v) (wakeup r));</span>
@@ -168,27 +189,51 @@ let sleep delay =
 let ( let* ) = bind</code></pre>
     <ul>
       <li class="ok"><code class="inl">bind</code> posts a callback and <span class="em">returns a result promise at once</span> — the caller keeps going, so sibling branches all start: Lwt's <em>implicit concurrency</em>.</li>
-      <li>No effects anywhere. <code class="inl">run : 'a t -&gt; 'a</code>.</li>
+      <li>No effects. <code class="inl">run : 'a t -&gt; 'a</code> takes the promise directly.</li>
     </ul>
   </section>
 
   <section>
-    <div class="kicker">Slide 6 — OCaml 5</div>
+    <div class="kicker">OCaml 5 effects — the mechanism</div>
     <h2>Enter effects</h2>
-    <pre><code class="block">type _ Effect.t += Await : 'a t -&gt; 'a Effect.t | Yield : unit Effect.t
+    <pre class="small"><code class="block">type _ Effect.t += Await : 'a t -&gt; 'a Effect.t | Yield : unit Effect.t
 
 let await p = match p.state with
   | Done v -&gt; v
-  | Waiting _ -&gt; Effect.perform (Await p)</code></pre>
+  | Waiting _ -&gt; Effect.perform (Await p)     <span class="cmt">(* suspend the fiber *)</span>
+
+<span class="cmt">(* since OCaml 5.3, a handler is just a match: *)</span>
+match compute () with
+| v            -&gt; ...    <span class="cmt">(* normal result *)</span>
+| effect E, k  -&gt; ...    <span class="cmt">(* effect E, with its continuation k *)</span></code></pre>
+    <p class="caption"><code class="inl">perform</code> hands the continuation <code class="inl">k</code> to the enclosing handler; resuming <code class="inl">k</code> re-enters the computation under that same handler.</p>
+  </section>
+
+  <section>
+    <div class="kicker">OCaml 5 effects — running fibers</div>
+    <h2>The effect <code class="inl" style="font-size:.7em">run</code></h2>
+    <pre class="small"><code class="block">let run main =                       <span class="cmt">(* run : (unit -&gt; 'a t) -&gt; 'a *)</span>
+  let result = ref None in
+  let fiber () =
+    match result := Some (await (main ())) with
+    | () -&gt; ()                        <span class="cmt">(* main resolved *)</span>
+<span class="hl">    | effect Await p, k -&gt;            (* park k; resume when p resolves *)</span>
+        on_resolve p (fun v -&gt; Queue.add (fun () -&gt; Effect.Deep.continue k v) ready)
+<span class="hl">    | effect Yield, k -&gt; Queue.add (fun () -&gt; Effect.Deep.continue k ()) ready</span>
+  in
+  Queue.add fiber ready;
+  loop ();                           <span class="cmt">(* the SAME ready/timers loop as V1 *)</span>
+  match !result with Some v -&gt; v | None -&gt; failwith "run: deadlock"</code></pre>
     <ul>
-      <li><code class="inl">perform</code> suspends the current fiber; the <span class="em">handler</span> gets the continuation <code class="inl">k</code>.</li>
-      <li>On <code class="inl">Await p</code>, the handler registers a waiter that re-enqueues <code class="inl">continue k v</code> once <code class="inl">p</code> resolves. Each fiber runs under it.</li>
+      <li>The three <code class="inl">match</code> cases <span class="em">are</span> the whole handler — no <code class="inl">{ retc; exnc; effc }</code> record, no GADT annotation.</li>
+      <li>Same loop as V1; only a <span class="em">fiber wrapper</span> around <code class="inl">main</code> is added.</li>
+      <li>It takes <code class="inl">unit -&gt; 'a t</code>, not <code class="inl">'a t</code>: the awaits must happen <span class="em">inside</span> the fiber.</li>
     </ul>
   </section>
 
   <section>
-    <div class="kicker">Slide 7 — Version 2</div>
-    <h2 style="color:var(--warn)">Effects, but it breaks the semantics <span class="tag" style="color:#b06b66">minilwt_eff_break.ml</span></h2>
+    <div class="kicker">Version 2 — effects, broken</div>
+    <h2 style="color:var(--warn)">It breaks the semantics <span class="tag" style="color:#b06b66">minilwt_eff_break.ml</span></h2>
     <pre><code class="block"><span class="hl" style="border-color:var(--warn);background:rgba(255,123,114,.14)">let bind p f = f (await p)</span></code></pre>
     <ul>
       <li>Tempting: the <span class="em">shortest</span> possible bind, and the native stack survives the <code class="inl">await</code>.</li>
@@ -198,7 +243,7 @@ let await p = match p.state with
   </section>
 
   <section>
-    <div class="kicker">Slide 8 — The bug, on the clock</div>
+    <div class="kicker">The bug, on the clock</div>
     <h2>Same program, two timings</h2>
     <p class="caption"><code class="inl">both (task "a" 0.15) (task "b" 0.15)</code> — two tasks that each <code class="inl">sleep</code> then print.</p>
     <div class="bars">
@@ -215,8 +260,8 @@ let await p = match p.state with
   </section>
 
   <section>
-    <div class="kicker">Slide 9 — Version 3</div>
-    <h2 style="color:var(--accent)">Effects, semantics preserved <span class="tag" style="color:#5f8f66">minilwt_eff_keep.ml — "mbind"</span></h2>
+    <div class="kicker">Version 3 — effects, preserved</div>
+    <h2 style="color:var(--accent)">Semantics preserved <span class="tag" style="color:#5f8f66">minilwt_eff_keep.ml — "mbind"</span></h2>
     <pre><code class="block"><span class="cmt">(* same effect machinery as V2, but bind is V1's, byte for byte *)</span>
 let bind p f =
   let r = { state = Waiting [] } in
@@ -229,7 +274,7 @@ let bind p f =
   </section>
 
   <section>
-    <div class="kicker">Slide 10 — The whole point</div>
+    <div class="kicker">The whole point</div>
     <h2>Side by side</h2>
     <div class="cols">
       <div class="keep">
@@ -252,12 +297,13 @@ let bind p f =
       <tr><th></th><th>V1 classic</th><th>V2 broken</th><th>V3 preserved</th></tr>
       <tr><td>bind</td><td>callback</td><td><code class="inl">f (await p)</code></td><td>callback (= V1)</td></tr>
       <tr><td>implicit concurrency</td><td class="y">preserved</td><td class="n">broken</td><td class="y">preserved</td></tr>
+      <tr><td><code class="inl">run</code></td><td><code class="inl">'a t -&gt; 'a</code></td><td><code class="inl">(unit -&gt; 'a t) -&gt; 'a</code></td><td><code class="inl">(unit -&gt; 'a t) -&gt; 'a</code></td></tr>
       <tr><td>direct-style <code class="inl">await</code></td><td>no</td><td>it <em>is</em> bind</td><td>opt-in</td></tr>
     </table>
   </section>
 
   <section>
-    <div class="kicker">Slide 11 — Takeaways</div>
+    <div class="kicker">Takeaways</div>
     <h2>What the three teach</h2>
     <ul>
       <li class="ok">The <span class="em">preserving</span> effect <code class="inl">bind</code> <em>is</em> the classic <code class="inl">bind</code>. Effects don't replace the monad — they add a direct-style <code class="inl">await</code> and a lean scheduler underneath.</li>
@@ -268,7 +314,7 @@ let bind p f =
   </section>
 
   <section>
-    <div class="kicker">Slide 12 — Try it</div>
+    <div class="kicker">Try it</div>
     <h2>Run it yourself</h2>
     <pre><code class="block">cat minilwt.ml            demo.ml     | ocaml -I +unix unix.cma -stdin
 cat minilwt_eff_keep.ml   demo_eff.ml | ocaml -I +unix unix.cma -stdin
