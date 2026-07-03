@@ -1,0 +1,10 @@
+# Private AI report symlink (kept locally, never published)
+/ai-report.md
+
+# OCaml build artefacts
+_build/
+*.cmi
+*.cmo
+*.cmx
+*.o
+*.install
