@@ -344,6 +344,47 @@ concatenate-and-pipe form.
 
 ---
 
+## What this shows, and what it does not
+
+This repo compares **semantics**, not performance.
+
+The genuinely useful, non-obvious lesson is the trap in slide 10: the tempting
+one-liner `bind = f (await p)` silently destroys Lwt's implicit concurrency (the
+two sleeps run in series, 0.30 s), while the callback `bind` preserves it
+(0.15 s). That mistake is easy to make when reimplementing Lwt on effects.
+
+What it does **not** show is any performance advantage of the effect-based
+`keep` core over the classic monadic one. In this repo, `minilwt_eff_keep.ml`'s
+`bind` is **byte-for-byte** `minilwt.ml`'s: same callbacks, same scheduler. In
+purely-monadic code the effects are barely used (the only `perform` is `run`'s
+`await (main ())`, which could even be a plain callback). So **`keep` is
+equivalent to the classic core, in both semantics and performance.** If you only
+ever write `let*`, `keep` buys you nothing over the classic version.
+
+This matches the full experiment, where the monadic path performs no effect and
+measurements show close to zero time spent in the effects machinery. Adopting
+effects does not slow the monadic path down, but it does not speed it up either.
+
+Where the effect-based core actually helps (none of which this toy exercises):
+
+1. **Direct-style `await`**, the escape hatch: the continuation *is* the stack,
+   so a suspended `await` allocates almost nothing, versus a promise plus a
+   closure per monadic `bind`. It also gives native backtraces, native
+   `try/with`, and plain loops. This is exactly what `break`'s `bind` uses,
+   except `break` uses it *for `bind`*, which is what kills concurrency. You
+   benefit only in code you deliberately write in direct style.
+2. **A core leaner than production Lwt**: no proxy machinery (path-compressed
+   `underlying` chains), a ring-buffer run queue. But `minilwt.ml` here is
+   already lean, so there is no gap in this toy; the gap is against real Lwt.
+3. **io_uring** for I/O: the real end-to-end win in the full experiment (on a
+   keep-alive HTTP server, `keep` alone is about the same as classic Lwt; the
+   gain comes from io_uring). This toy has no I/O.
+
+So `keep`'s value is not monadic performance. It is being a faithful drop-in Lwt
+(same semantics, full compatibility) on a core that *also* offers direct style
+on the same promise type, which pure-monadic Lwt cannot do without effects, with
+the real speedups coming from the scheduler and io_uring, orthogonal to `bind`.
+
 ## Files
 
 | File | What it is |
