@@ -214,6 +214,9 @@ let run main =                       (* run : (unit -> 'a t) -> 'a *)
   match !result with Some v -> v | None -> failwith "run: deadlock"
 ```
 
+This scheduler skeleton is generic — Eio and Miou have the same shape; what
+makes it Lwt is the promise `'a t` and the monadic `bind`, not the engine.
+
 ## Slide 10 — Version 2: effects, but it breaks the semantics (`minilwt_eff_break.ml`)
 
 ```ocaml
