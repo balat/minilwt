@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>minilwt — three tiny schedulers</title>
+  <title>minilwt - three tiny schedulers</title>
   <style>
     :root {
       --bg: #0f1420;
@@ -354,7 +354,7 @@
     </section>
 
     <section>
-      <div class="kicker">Shared core — the promise</div>
+      <div class="kicker">Shared core - the promise</div>
       <h2>A promise, minimally</h2>
       <pre><code class="block">type 'a t = { mutable state : 'a state }
 and 'a state = Done of 'a | Waiting of ('a -&gt; unit) list
@@ -374,7 +374,7 @@ let on_resolve p f = match p.state with
     </section>
 
     <section>
-      <div class="kicker">Shared core — sleep &amp; yield</div>
+      <div class="kicker">Shared core - sleep &amp; yield</div>
       <h2>Two ways to suspend</h2>
       <pre><code class="block">let ready  = Queue.create ()   <span class="cmt">(* tasks from yield *)</span>
 let timers = ref []            <span class="cmt">(* (deadline, wake) for sleep *)</span>
@@ -392,7 +392,7 @@ let yield () =                 <span class="cmt">(* resolves on the next tick *)
     </section>
 
     <section>
-      <div class="kicker">Shared core — the run loop</div>
+      <div class="kicker">Shared core - the run loop</div>
       <h2>Where it all turns: <code class="inl" style="font-size:.7em">run</code></h2>
       <pre><code class="block">let rec run p = match p.state with
   | Done v -&gt; v                          <span class="cmt">(* main promise resolved: return it *)</span>
@@ -411,7 +411,7 @@ let yield () =                 <span class="cmt">(* resolves on the next tick *)
     </section>
 
     <section>
-      <div class="kicker">Version 1 — classic monadic</div>
+      <div class="kicker">Version 1 - classic monadic</div>
       <h2>Callbacks, no effects <span class="tag">minilwt.ml</span></h2>
       <pre><code class="block">let bind p f =
   let r = { state = Waiting [] } in
@@ -421,22 +421,22 @@ let yield () =                 <span class="cmt">(* resolves on the next tick *)
 let ( let* ) = bind</code></pre>
       <ul>
         <li class="ok"><code class="inl">bind</code> posts a callback and <span class="em">returns a result promise at
-            once</span> — the caller keeps going, so sibling branches all start: Lwt's <em>implicit concurrency</em>.
+            once</span> - the caller keeps going, so sibling branches all start: Lwt's <em>implicit concurrency</em>.
         </li>
         <li>No effects. <code class="inl">run : 'a t -&gt; 'a</code> takes the promise directly.</li>
       </ul>
     </section>
 
     <section>
-      <div class="kicker">Version 1 — bind, explained</div>
+      <div class="kicker">Version 1 - bind, explained</div>
       <h2>Why two <code class="inl" style="font-size:.7em">on_resolve</code>?</h2>
-      <pre class="small"><code class="block">let bind p f =                 <span class="cmt">(* f : 'a -&gt; 'b t  — returns a PROMISE *)</span>
+      <pre class="small"><code class="block">let bind p f =                 <span class="cmt">(* f : 'a -&gt; 'b t  - returns a PROMISE *)</span>
   let r = { state = Waiting [] } in
 <span class="hl">  on_resolve p (fun v -&gt;               (* 1. wait for p : 'a *)</span>
 <span class="hl">    on_resolve (f v) (wakeup r));      (* 2. then wait for (f v), copy into r *)</span>
   r
 
-<span class="cmt">(* for contrast — map (not in the file): g : 'a -&gt; 'b, a VALUE *)</span>
+<span class="cmt">(* for contrast - map (not in the file): g : 'a -&gt; 'b, a VALUE *)</span>
 let map g p =
   let r = { state = Waiting [] } in
   on_resolve p (fun v -&gt; wakeup r (g v));    <span class="cmt">(* ONE wait: g v is ready *)</span>
@@ -444,12 +444,12 @@ let map g p =
       <ul>
         <li>Two promises to await in turn: first <code class="inl">p</code>, then the promise that <code class="inl">f v</code> itself returns. <span class="em">One <code class="inl">on_resolve</code> each.</span></li>
         <li>The second one is the monadic <span class="em">flatten</span>: it forwards <code class="inl">f v</code>'s eventual value into the placeholder <code class="inl">r</code>.</li>
-        <li><code class="inl">map</code> needs only one — <code class="inl">g v</code> is a plain value. Functor (1 level) vs monad (2 levels).</li>
+        <li><code class="inl">map</code> needs only one - <code class="inl">g v</code> is a plain value. Functor (1 level) vs monad (2 levels).</li>
       </ul>
     </section>
 
     <section>
-      <div class="kicker">OCaml 5 effects — the mechanism</div>
+      <div class="kicker">OCaml 5 effects - the mechanism</div>
       <h2>Enter effects</h2>
       <pre><code class="block">type _ Effect.t += Await : 'a t -&gt; 'a Effect.t | Yield : unit Effect.t
 
@@ -459,12 +459,12 @@ let await p = match p.state with
       <ul>
         <li><code class="inl">perform</code> suspends the current fiber and hands its continuation <code class="inl">k</code> to the enclosing handler.</li>
         <li>The handler parks <code class="inl">k</code> as a waiter and re-enqueues it once the awaited promise resolves; resuming <code class="inl">k</code> re-enters under the same handler.</li>
-        <li>Who performs? Only <code class="inl">await</code> (on a pending promise) and <code class="inl">yield</code>. In <b>keep</b> <code class="inl">bind</code> never does — purely-monadic code performs just once, at <code class="inl">run</code>'s <code class="inl">await (main ())</code>; in <b>break</b>, every pending <code class="inl">bind</code> does.</li>
+        <li>Who performs? Only <code class="inl">await</code> (on a pending promise) and <code class="inl">yield</code>. In <b>keep</b> <code class="inl">bind</code> never does - purely-monadic code performs just once, at <code class="inl">run</code>'s <code class="inl">await (main ())</code>; in <b>break</b>, every pending <code class="inl">bind</code> does.</li>
       </ul>
     </section>
 
     <section>
-      <div class="kicker">OCaml 5 effects — running fibers</div>
+      <div class="kicker">OCaml 5 effects - running fibers</div>
       <h2>The effect <code class="inl" style="font-size:.7em">run</code></h2>
       <pre class="small"><code class="block">let run main =                       <span class="cmt">(* run : (unit -&gt; 'a t) -&gt; 'a *)</span>
   let result = ref None in
@@ -489,14 +489,14 @@ let await p = match p.state with
   loop ();
   match !result with Some v -&gt; v | None -&gt; failwith "run: deadlock"</code></pre>
       <ul>
-        <li>On <code class="inl">perform</code>, the handler parks <code class="inl">k</code> and <span class="em">returns to <code class="inl">loop</code></span> — it does <em>not</em> resume <code class="inl">k</code> now; <code class="inl">k</code> runs later, when its promise resolves and <code class="inl">loop</code> pops it.</li>
-        <li><code class="inl">fiber</code> runs <code class="inl">main</code> under the handler (so <code class="inl">run</code> takes <code class="inl">unit -&gt; 'a t</code>), and it is the <span class="em">only</span> fiber — no <code class="inl">async</code>/spawn. In <b>keep</b>, concurrency comes from <code class="inl">bind</code>'s callbacks, not fibers.</li>
+        <li>On <code class="inl">perform</code>, the handler parks <code class="inl">k</code> and <span class="em">returns to <code class="inl">loop</code></span> - it does <em>not</em> resume <code class="inl">k</code> now; <code class="inl">k</code> runs later, when its promise resolves and <code class="inl">loop</code> pops it.</li>
+        <li><code class="inl">fiber</code> runs <code class="inl">main</code> under the handler (so <code class="inl">run</code> takes <code class="inl">unit -&gt; 'a t</code>), and it is the <span class="em">only</span> fiber - no <code class="inl">async</code>/spawn. In <b>keep</b>, concurrency comes from <code class="inl">bind</code>'s callbacks, not fibers.</li>
         <li>This scheduler skeleton is <span class="em">generic</span> (Eio, Miou have it too); what makes it Lwt is the promise <code class="inl">'a t</code> + the monadic <code class="inl">bind</code>.</li>
       </ul>
     </section>
 
     <section>
-      <div class="kicker">Version 2 — effects, broken</div>
+      <div class="kicker">Version 2 - effects, broken</div>
       <h2 style="color:var(--warn)">It breaks the semantics <span class="tag"
           style="color:#b06b66">minilwt_eff_break.ml</span></h2>
       <pre><code class="block"><span class="hl" style="border-color:var(--warn);background:rgba(255,123,114,.14)">let bind p f = f (await p)</span></code></pre>
@@ -506,7 +506,7 @@ let await p = match p.state with
         <li class="warn">But on a pending promise <code class="inl">await</code> <span class="emw">suspends the whole
             fiber</span>: <code class="inl">bind</code> does not return until <code class="inl">p</code> resolves.</li>
         <li class="warn"><code class="inl">both (a &gt;&gt;= f) (b &gt;&gt;= g)</code> cannot start <code
-            class="inl">b</code> until <code class="inl">a</code> is done — the branches run <span class="emw">in
+            class="inl">b</code> until <code class="inl">a</code> is done - the branches run <span class="emw">in
             series</span>.</li>
       </ul>
     </section>
@@ -523,22 +523,22 @@ run (fun () -&gt; both (task "a" 0.15) (task "b" 0.15))</code></pre>
         <div class="bar">
           <span class="lab">V1 &amp; V3 (preserved)</span>
           <div class="track">
-            <div class="fill good" style="width:33%">0.15 s — concurrent</div>
+            <div class="fill good" style="width:33%">0.15 s - concurrent</div>
           </div>
         </div>
         <div class="bar">
           <span class="lab">V2 (broken)</span>
           <div class="track">
-            <div class="fill bad" style="width:66%">0.30 s — serialised</div>
+            <div class="fill bad" style="width:66%">0.30 s - serialised</div>
           </div>
         </div>
       </div>
-      <p class="caption">Both <code class="inl">task</code> calls run (starting both timers) before <code class="inl">both</code> does — <em>unless</em> <code class="inl">bind</code> suspends on the first <code class="inl">await</code>. That single difference is the whole gap.</p>
+      <p class="caption">Both <code class="inl">task</code> calls run (starting both timers) before <code class="inl">both</code> does - <em>unless</em> <code class="inl">bind</code> suspends on the first <code class="inl">await</code>. That single difference is the whole gap.</p>
     </section>
 
     <section>
-      <div class="kicker">Version 3 — effects, preserved</div>
-      <h2 style="color:var(--accent)">Semantics preserved <span class="tag" style="color:#5f8f66">minilwt_eff_keep.ml —
+      <div class="kicker">Version 3 - effects, preserved</div>
+      <h2 style="color:var(--accent)">Semantics preserved <span class="tag" style="color:#5f8f66">minilwt_eff_keep.ml -
           "mbind"</span></h2>
       <pre><code class="block"><span class="cmt">(* same effect machinery as V2, but bind is V1's, byte for byte *)</span>
 let bind p f =
@@ -613,11 +613,11 @@ let bind p f =
       <h2>What the three teach</h2>
       <ul>
         <li class="ok">The <span class="em">preserving</span> effect <code class="inl">bind</code> <em>is</em> the
-          classic <code class="inl">bind</code>. Effects don't replace the monad — they add a direct-style <code
+          classic <code class="inl">bind</code>. Effects don't replace the monad - they add a direct-style <code
             class="inl">await</code> and a lean scheduler underneath.</li>
         <li class="warn">The one-liner <code class="inl">bind = f (await p)</code> is seductive but <span
             class="emw">silently changes what a program means</span>.</li>
-        <li>The monadic type <code class="inl">'a t</code> keeps marking async in the signature — the thing Lwt users
+        <li>The monadic type <code class="inl">'a t</code> keeps marking async in the signature - the thing Lwt users
           rely on.</li>
         <li>This is the boiled-down model of a larger experiment: a full effects-based Lwt core with an <span
             class="em">io_uring</span> back end.</li>
@@ -631,7 +631,7 @@ let bind p f =
 cat minilwt_eff_keep.ml   demo_eff.ml | ocaml -I +unix unix.cma -stdin
 cat minilwt_eff_break.ml  demo_eff.ml | ocaml -I +unix unix.cma -stdin</code></pre>
       <ul>
-        <li>No build system on purpose — the point is the single file.</li>
+        <li>No build system on purpose - the point is the single file.</li>
         <li><code class="inl">ocaml a.ml b.ml</code> won't do: the toplevel runs only the first file and passes the rest
           as argv. Hence the concatenate-and-pipe form.</li>
       </ul>
