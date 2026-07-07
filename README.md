@@ -191,6 +191,10 @@ enclosing handler, which parks `k` as a waiter and re-enqueues it (with
 `Effect.Deep.continue k v`) once the awaited promise resolves. Resuming `k`
 re-enters under the same handler.
 
+Who performs? Only `await` (on a pending promise) and `yield`. In the **keep**
+core `bind` never performs, so purely-monadic code performs just once — at
+`run`'s `await (main ())`; in the **break** core, every pending `bind` does.
+
 ## Slide 9 — The effect `run`: running fibers
 
 A *fiber* is a lightweight thread of control, started under the handler. V1 had
@@ -227,6 +231,16 @@ let run main =                       (* run : (unit -> 'a t) -> 'a *)
   loop ();
   match !result with Some v -> v | None -> failwith "run: deadlock"
 ```
+
+How it actually runs (keep core): `main ()` builds a chain of promises via
+`bind` — that performs *no* effect. The one `perform` is `run`'s
+`await (main ())`, which the handler catches: it parks the continuation `k` in a
+callback on `main`'s promise and **returns to `loop`** (it does not resume `k`
+now). `loop` then fires the timers; each `wakeup` runs callbacks, and when
+`main`'s promise finally resolves its callback enqueues `continue k ()`, which
+`loop` pops to finish the fiber. So there is exactly **one fiber** here (no
+`async`/spawn — that would be how you create more); the concurrency comes
+entirely from `bind`'s callbacks, not from fibers.
 
 This scheduler skeleton is generic — Eio and Miou have the same shape; what
 makes it Lwt is the promise `'a t` and the monadic `bind`, not the engine.
