@@ -193,10 +193,13 @@ re-enters under the same handler.
 
 ## Slide 9 — The effect `run`: running fibers
 
-A *fiber* is a lightweight thread of control, started under the handler. The
-effect cores reuse the **exact same ready/timers loop** as version 1; they only
-add a fiber wrapper around `main` and its handler. So `run` takes `unit -> 'a t`
-(not `'a t`): the awaits must happen *inside* the fiber, under the handler.
+A *fiber* is a lightweight thread of control, started under the handler. V1 had
+no separate `loop`: its `run` *was* the loop (slide 5). Here the driving policy
+is the same (drain the ready queue, else fire the nearest timer), but written as
+an inner `loop`, because the result now comes back through a ref rather than
+from `run`'s own return. On top of that, the effect `run` adds only the handler
+and a fiber wrapper around `main`. So it takes `unit -> 'a t` (not `'a t`): the
+awaits must happen *inside* the fiber, under the handler.
 
 ```ocaml
 let run main =                       (* run : (unit -> 'a t) -> 'a *)
@@ -210,7 +213,18 @@ let run main =                       (* run : (unit -> 'a t) -> 'a *)
         Queue.add (fun () -> Effect.Deep.continue k ()) ready
   in
   Queue.add fiber ready;
-  loop ();                           (* the SAME ready/timers loop as V1 *)
+  (* same policy as V1's run (slide 5): ready first, else nearest timer *)
+  let rec loop () =
+    if not (Queue.is_empty ready) then (Queue.pop ready (); loop ())
+    else match List.sort (fun (a, _) (b, _) -> compare a b) !timers with
+      | [] -> ()
+      | (t, wake) :: rest ->
+          timers := rest;
+          let dt = t -. Unix.gettimeofday () in
+          if dt > 0. then Unix.sleepf dt;
+          wake (); loop ()
+  in
+  loop ();
   match !result with Some v -> v | None -> failwith "run: deadlock"
 ```
 

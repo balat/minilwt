@@ -475,12 +475,20 @@ let await p = match p.state with
 <span class="hl">    | effect Yield, k -&gt; Queue.add (fun () -&gt; Effect.Deep.continue k ()) ready</span>
   in
   Queue.add fiber ready;
-  loop ();                           <span class="cmt">(* the SAME ready/timers loop as V1 *)</span>
+  <span class="cmt">(* same policy as V1's run (slide 5): ready first, else nearest timer *)</span>
+  let rec loop () =
+    if not (Queue.is_empty ready) then (Queue.pop ready (); loop ())
+    else match List.sort (fun (a,_) (b,_) -&gt; compare a b) !timers with
+      | [] -&gt; ()
+      | (t, wake) :: rest -&gt;
+          timers := rest;
+          let dt = t -. Unix.gettimeofday () in
+          if dt &gt; 0. then Unix.sleepf dt; wake (); loop ()
+  in
+  loop ();
   match !result with Some v -&gt; v | None -&gt; failwith "run: deadlock"</code></pre>
       <ul>
-        <li>Same loop as V1; the only additions are the <span class="em">handler</span> and a <span class="em">fiber wrapper</span> around <code class="inl">main</code>.</li>
-        <li>It takes <code class="inl">unit -&gt; 'a t</code>, not <code class="inl">'a t</code>: the awaits must happen
-          <span class="em">inside</span> the fiber.</li>
+        <li><code class="inl">loop</code> is V1's scheduling policy from slide 5, here as a helper; <code class="inl">run</code> adds only the <span class="em">handler</span> and a <span class="em">fiber wrapper</span> around <code class="inl">main</code> (result via a ref), so it takes <code class="inl">unit -&gt; 'a t</code>.</li>
         <li>This scheduler skeleton is <span class="em">generic</span> (Eio, Miou have it too); what makes it Lwt is the promise <code class="inl">'a t</code> + the monadic <code class="inl">bind</code>.</li>
       </ul>
     </section>
