@@ -1,131 +1,362 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>minilwt — three tiny schedulers</title>
-<style>
-  :root {
-    --bg: #0f1420;
-    --bg2: #161d2e;
-    --fg: #e6edf3;
-    --muted: #9aa7bd;
-    --accent: #7ee787;
-    --accent2: #79c0ff;
-    --warn: #ff7b72;
-    --code: #d6e2f5;
-    --comment: #7d8aa3;
-    --hl: rgba(126,231,135,0.14);
-    --hlborder: #7ee787;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body {
-    background: var(--bg);
-    color: var(--fg);
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    overflow: hidden;
-    -webkit-font-smoothing: antialiased;
-  }
-  main { height: 100vh; width: 100vw; position: relative; }
-  section {
-    position: absolute; inset: 0;
-    display: none;
-    flex-direction: column;
-    justify-content: center;
-    padding: clamp(24px, 6vh, 72px) clamp(28px, 8vw, 140px);
-    gap: clamp(12px, 2.2vh, 26px);
-    opacity: 0;
-    transition: opacity .25s ease;
-  }
-  section.active { display: flex; opacity: 1; }
-  .kicker {
-    color: var(--accent2);
-    font-size: clamp(.8rem, 1.6vh, 1rem);
-    font-weight: 600;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-  }
-  h1 { font-size: clamp(2.6rem, 8vh, 5.5rem); line-height: 1.02; font-weight: 800; letter-spacing: -.02em; }
-  h2 { font-size: clamp(1.6rem, 4.6vh, 3rem); line-height: 1.1; font-weight: 750; letter-spacing: -.01em; }
-  h2 .tag { font-size: .5em; color: var(--muted); font-weight: 600; }
-  p.sub { font-size: clamp(1.05rem, 2.6vh, 1.8rem); color: var(--muted); font-weight: 500; }
-  p.byline { margin-top: clamp(16px, 4vh, 48px); color: var(--muted); font-size: clamp(1rem, 2.2vh, 1.4rem); }
-  ul { list-style: none; display: flex; flex-direction: column; gap: clamp(8px, 1.8vh, 18px); }
-  li { font-size: clamp(1.05rem, 2.6vh, 1.7rem); line-height: 1.35; padding-left: 1.4em; position: relative; }
-  li::before { content: "▸"; color: var(--accent); position: absolute; left: 0; top: 0; }
-  li.warn::before { content: "✕"; color: var(--warn); }
-  li.ok::before { content: "✓"; color: var(--accent); }
-  code.inl { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; background: var(--bg2); padding: .06em .38em; border-radius: 5px; color: var(--code); font-size: .92em; }
-  .em { color: var(--accent); font-weight: 600; }
-  .emw { color: var(--warn); font-weight: 600; }
-  pre {
-    background: var(--bg2);
-    border-radius: 12px;
-    padding: clamp(14px, 2.6vh, 26px) clamp(16px, 2.6vw, 30px);
-    overflow: auto;
-    border: 1px solid #24304a;
-  }
-  pre.small code { font-size: clamp(.72rem, 1.7vh, 1.05rem); }
-  code.block {
-    display: block;
-    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-    font-size: clamp(.82rem, 2vh, 1.25rem);
-    line-height: 1.5;
-    color: var(--code);
-    white-space: pre;
-    tab-size: 2;
-  }
-  code .cmt { color: var(--comment); font-style: italic; }
-  .hl { background: var(--hl); border-left: 3px solid var(--hlborder); display: inline-block; width: 100%; margin-left: -3px; padding-left: calc(3px); }
-  .caption { color: var(--muted); font-size: clamp(.9rem, 2vh, 1.25rem); }
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(14px, 2.4vw, 30px); align-items: start; }
-  .cols h3 { font-size: clamp(.95rem, 2.1vh, 1.3rem); margin-bottom: .5em; font-weight: 700; }
-  .cols .keep h3 { color: var(--accent); }
-  .cols .break h3 { color: var(--warn); }
-  table { border-collapse: collapse; font-size: clamp(.82rem, 1.9vh, 1.2rem); }
-  th, td { text-align: left; padding: .38em .9em; border-bottom: 1px solid #24304a; }
-  th { color: var(--muted); font-weight: 600; }
-  td.y { color: var(--accent); } td.n { color: var(--warn); font-weight: 600; }
-  .bars { display: flex; flex-direction: column; gap: clamp(14px, 3vh, 30px); margin-top: 1vh; max-width: 900px; }
-  .bar { display: grid; grid-template-columns: 190px 1fr; align-items: center; gap: 18px; }
-  .bar .lab { color: var(--muted); font-size: clamp(.9rem, 2vh, 1.25rem); }
-  .bar .track { height: clamp(26px, 4.4vh, 46px); background: var(--bg2); border-radius: 8px; position: relative; border: 1px solid #24304a; }
-  .bar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 7px; display: flex; align-items: center; padding-left: 14px; font-weight: 700; color: #0f1420; }
-  .fill.good { background: var(--accent); }
-  .fill.bad { background: var(--warn); }
-  .progress { position: fixed; top: 0; left: 0; height: 3px; background: var(--accent); z-index: 10; transition: width .25s ease; }
-  .counter { position: fixed; bottom: 16px; right: 22px; color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; z-index: 10; }
-  .hint { position: fixed; bottom: 16px; left: 22px; color: #56617a; font-size: .8rem; z-index: 10; }
-  @media (max-width: 760px) { .cols, .bar { grid-template-columns: 1fr; } }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>minilwt — three tiny schedulers</title>
+  <style>
+    :root {
+      --bg: #0f1420;
+      --bg2: #161d2e;
+      --fg: #e6edf3;
+      --muted: #9aa7bd;
+      --accent: #7ee787;
+      --accent2: #79c0ff;
+      --warn: #ff7b72;
+      --code: #d6e2f5;
+      --comment: #7d8aa3;
+      --hl: rgba(126, 231, 135, 0.14);
+      --hlborder: #7ee787;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      height: 100%;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    main {
+      height: 100vh;
+      width: 100vw;
+      position: relative;
+    }
+
+    section {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      padding: clamp(24px, 6vh, 72px) clamp(28px, 8vw, 140px);
+      gap: clamp(12px, 2.2vh, 26px);
+      opacity: 0;
+      transition: opacity .25s ease;
+    }
+
+    section.active {
+      display: flex;
+      opacity: 1;
+    }
+
+    .kicker {
+      color: var(--accent2);
+      font-size: clamp(.8rem, 1.6vh, 1rem);
+      font-weight: 600;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      font-size: clamp(2.6rem, 8vh, 5.5rem);
+      line-height: 1.02;
+      font-weight: 800;
+      letter-spacing: -.02em;
+    }
+
+    h2 {
+      font-size: clamp(1.6rem, 4.6vh, 3rem);
+      line-height: 1.1;
+      font-weight: 750;
+      letter-spacing: -.01em;
+    }
+
+    h2 .tag {
+      font-size: .5em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    p.sub {
+      font-size: clamp(1.05rem, 2.6vh, 1.8rem);
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    p.byline {
+      margin-top: clamp(16px, 4vh, 48px);
+      color: var(--muted);
+      font-size: clamp(1rem, 2.2vh, 1.4rem);
+    }
+
+    ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: clamp(8px, 1.8vh, 18px);
+    }
+
+    li {
+      font-size: clamp(1.05rem, 2.6vh, 1.7rem);
+      line-height: 1.35;
+      padding-left: 1.4em;
+      position: relative;
+    }
+
+    li::before {
+      content: "▸";
+      color: var(--accent);
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+
+    li.warn::before {
+      content: "✕";
+      color: var(--warn);
+    }
+
+    li.ok::before {
+      content: "✓";
+      color: var(--accent);
+    }
+
+    code.inl {
+      font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+      background: var(--bg2);
+      padding: .06em .38em;
+      border-radius: 5px;
+      color: var(--code);
+      font-size: .92em;
+    }
+
+    .em {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .emw {
+      color: var(--warn);
+      font-weight: 600;
+    }
+
+    pre {
+      background: var(--bg2);
+      border-radius: 12px;
+      padding: clamp(14px, 2.6vh, 26px) clamp(16px, 2.6vw, 30px);
+      overflow: auto;
+      border: 1px solid #24304a;
+    }
+
+    pre.small code {
+      font-size: clamp(.72rem, 1.7vh, 1.05rem);
+    }
+
+    code.block {
+      display: block;
+      font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+      font-size: clamp(.82rem, 2vh, 1.25rem);
+      line-height: 1.5;
+      color: var(--code);
+      white-space: pre;
+      tab-size: 2;
+    }
+
+    code .cmt {
+      color: var(--comment);
+      font-style: italic;
+    }
+
+    .hl {
+      background: var(--hl);
+      border-left: 3px solid var(--hlborder);
+      display: inline-block;
+      width: 100%;
+      margin-left: -3px;
+      padding-left: calc(3px);
+    }
+
+    .caption {
+      color: var(--muted);
+      font-size: clamp(.9rem, 2vh, 1.25rem);
+    }
+
+    .cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: clamp(14px, 2.4vw, 30px);
+      align-items: start;
+    }
+
+    .cols h3 {
+      font-size: clamp(.95rem, 2.1vh, 1.3rem);
+      margin-bottom: .5em;
+      font-weight: 700;
+    }
+
+    .cols .keep h3 {
+      color: var(--accent);
+    }
+
+    .cols .break h3 {
+      color: var(--warn);
+    }
+
+    table {
+      border-collapse: collapse;
+      font-size: clamp(.82rem, 1.9vh, 1.2rem);
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: .38em .9em;
+      border-bottom: 1px solid #24304a;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    td.y {
+      color: var(--accent);
+    }
+
+    td.n {
+      color: var(--warn);
+      font-weight: 600;
+    }
+
+    .bars {
+      display: flex;
+      flex-direction: column;
+      gap: clamp(14px, 3vh, 30px);
+      margin-top: 1vh;
+      max-width: 900px;
+    }
+
+    .bar {
+      display: grid;
+      grid-template-columns: 190px 1fr;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .bar .lab {
+      color: var(--muted);
+      font-size: clamp(.9rem, 2vh, 1.25rem);
+    }
+
+    .bar .track {
+      height: clamp(26px, 4.4vh, 46px);
+      background: var(--bg2);
+      border-radius: 8px;
+      position: relative;
+      border: 1px solid #24304a;
+    }
+
+    .bar .fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      padding-left: 14px;
+      font-weight: 700;
+      color: #0f1420;
+    }
+
+    .fill.good {
+      background: var(--accent);
+    }
+
+    .fill.bad {
+      background: var(--warn);
+    }
+
+    .progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      background: var(--accent);
+      z-index: 10;
+      transition: width .25s ease;
+    }
+
+    .counter {
+      position: fixed;
+      bottom: 16px;
+      right: 22px;
+      color: var(--muted);
+      font-size: .85rem;
+      font-variant-numeric: tabular-nums;
+      z-index: 10;
+    }
+
+    .hint {
+      position: fixed;
+      bottom: 16px;
+      left: 22px;
+      color: #56617a;
+      font-size: .8rem;
+      z-index: 10;
+    }
+
+    @media (max-width: 760px) {
+
+      .cols,
+      .bar {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
 </head>
+
 <body>
-<div class="progress" id="progress"></div>
-<main id="deck">
+  <div class="progress" id="progress"></div>
+  <main id="deck">
 
-  <section>
-    <div class="kicker">A talk in code</div>
-    <h1>minilwt</h1>
-    <p class="sub">Three tiny promise schedulers, one idea at a time.</p>
-    <p class="sub">Classic monadic Lwt &nbsp;·&nbsp; effects that <span class="emw">break</span> the semantics &nbsp;·&nbsp; effects that <span class="em">keep</span> them.</p>
-    <p class="byline">Vincent Balat</p>
-  </section>
+    <section>
+      <div class="kicker">A talk in code</div>
+      <h1>minilwt</h1>
+      <p class="sub">Three tiny promise schedulers, one idea at a time.</p>
+      <p class="sub">Classic monadic Lwt &nbsp;·&nbsp; effects that <span class="emw">break</span> the semantics
+        &nbsp;·&nbsp; effects that <span class="em">keep</span> them.</p>
+      <p class="byline">Vincent Balat</p>
+    </section>
 
-  <section>
-    <div class="kicker">Motivation</div>
-    <h2>Why compare?</h2>
-    <ul>
-      <li>Lwt is <span class="em">promises + a monadic <code class="inl">bind</code></span>. The type <code class="inl">'a Lwt.t</code> marks, in the signature, that a function is asynchronous.</li>
-      <li>OCaml 5 brought <span class="em">effects</span> (Eio, Miou, ...) and fast direct-style schedulers. Can we get that speed <em>and</em> keep Lwt's monadic type and full compatibility?</li>
-      <li>Shrink Lwt to its essence and compare three cores that differ in exactly one function: <code class="inl">bind</code>.</li>
-    </ul>
-  </section>
+    <section>
+      <div class="kicker">Motivation</div>
+      <h2>Why compare?</h2>
+      <ul>
+        <li>Lwt is <span class="em">promises + a monadic <code class="inl">bind</code></span>. The type <code
+            class="inl">'a Lwt.t</code> marks, in the signature, that a function is asynchronous.</li>
+        <li>OCaml 5 brought <span class="em">effects</span> (Eio, Miou, ...) and fast direct-style schedulers. Can we
+          get that speed <em>and</em> keep Lwt's monadic type and full compatibility?</li>
+        <li>Shrink Lwt to its essence and compare three cores that differ in exactly one function: <code
+            class="inl">bind</code>.</li>
+      </ul>
+    </section>
 
-  <section>
-    <div class="kicker">Shared core — the promise</div>
-    <h2>A promise, minimally</h2>
-    <pre><code class="block">type 'a t = { mutable state : 'a state }
+    <section>
+      <div class="kicker">Shared core — the promise</div>
+      <h2>A promise, minimally</h2>
+      <pre><code class="block">type 'a t = { mutable state : 'a state }
 and 'a state = Done of 'a | Waiting of ('a -&gt; unit) list
 
 let return v = { state = Done v }
@@ -139,13 +370,13 @@ let wakeup p v = match p.state with
 let on_resolve p f = match p.state with
   | Done v -&gt; f v
   | Waiting ws -&gt; p.state &lt;- Waiting (f :: ws)</code></pre>
-    <p class="caption">A promise is a mutable cell: a value, or a list of waiting callbacks.</p>
-  </section>
+      <p class="caption">A promise is a mutable cell: a value, or a list of waiting callbacks.</p>
+    </section>
 
-  <section>
-    <div class="kicker">Shared core — sleep &amp; yield</div>
-    <h2>Two ways to suspend</h2>
-    <pre><code class="block">let ready  = Queue.create ()   <span class="cmt">(* tasks from yield *)</span>
+    <section>
+      <div class="kicker">Shared core — sleep &amp; yield</div>
+      <h2>Two ways to suspend</h2>
+      <pre><code class="block">let ready  = Queue.create ()   <span class="cmt">(* tasks from yield *)</span>
 let timers = ref []            <span class="cmt">(* (deadline, wake) for sleep *)</span>
 
 let sleep delay =              <span class="cmt">(* resolves after [delay] seconds *)</span>
@@ -157,13 +388,13 @@ let yield () =                 <span class="cmt">(* resolves on the next tick *)
   let p = { state = Waiting [] } in
   Queue.add (fun () -&gt; wakeup p ()) ready;
   p</code></pre>
-    <p class="caption">Each returns a pending promise and schedules its own wake-up.</p>
-  </section>
+      <p class="caption">Each returns a pending promise and schedules its own wake-up.</p>
+    </section>
 
-  <section>
-    <div class="kicker">Shared core — the run loop</div>
-    <h2>Where it all turns: <code class="inl" style="font-size:.7em">run</code></h2>
-    <pre><code class="block">let rec run p = match p.state with
+    <section>
+      <div class="kicker">Shared core — the run loop</div>
+      <h2>Where it all turns: <code class="inl" style="font-size:.7em">run</code></h2>
+      <pre><code class="block">let rec run p = match p.state with
   | Done v -&gt; v                          <span class="cmt">(* main promise resolved: return it *)</span>
   | Waiting _ -&gt;
 <span class="hl">      (if not (Queue.is_empty ready) then Queue.pop ready ()   (* a ready task *)</span>
@@ -175,44 +406,66 @@ let yield () =                 <span class="cmt">(* resolves on the next tick *)
              if dt &gt; 0. then Unix.sleepf dt;
              wake ());
       run p</code></pre>
-    <p class="caption">Ready tasks first; otherwise sleep until the nearest timer. The very same loop drives all three cores.</p>
-  </section>
+      <p class="caption">Ready tasks first; otherwise sleep until the nearest timer. The very same loop drives all three
+        cores.</p>
+    </section>
 
-  <section>
-    <div class="kicker">Version 1 — classic monadic</div>
-    <h2>Callbacks, no effects <span class="tag">minilwt.ml</span></h2>
-    <pre><code class="block">let bind p f =
+    <section>
+      <div class="kicker">Version 1 — classic monadic</div>
+      <h2>Callbacks, no effects <span class="tag">minilwt.ml</span></h2>
+      <pre><code class="block">let bind p f =
   let r = { state = Waiting [] } in
 <span class="hl">  on_resolve p (fun v -&gt; on_resolve (f v) (wakeup r));</span>
   r
 
 let ( let* ) = bind</code></pre>
-    <ul>
-      <li class="ok"><code class="inl">bind</code> posts a callback and <span class="em">returns a result promise at once</span> — the caller keeps going, so sibling branches all start: Lwt's <em>implicit concurrency</em>.</li>
-      <li>No effects. <code class="inl">run : 'a t -&gt; 'a</code> takes the promise directly.</li>
-    </ul>
-  </section>
+      <ul>
+        <li class="ok"><code class="inl">bind</code> posts a callback and <span class="em">returns a result promise at
+            once</span> — the caller keeps going, so sibling branches all start: Lwt's <em>implicit concurrency</em>.
+        </li>
+        <li>No effects. <code class="inl">run : 'a t -&gt; 'a</code> takes the promise directly.</li>
+      </ul>
+    </section>
 
-  <section>
-    <div class="kicker">OCaml 5 effects — the mechanism</div>
-    <h2>Enter effects</h2>
-    <pre class="small"><code class="block">type _ Effect.t += Await : 'a t -&gt; 'a Effect.t | Yield : unit Effect.t
+    <section>
+      <div class="kicker">Version 1 — bind, explained</div>
+      <h2>Why two <code class="inl" style="font-size:.7em">on_resolve</code>?</h2>
+      <pre class="small"><code class="block">let bind p f =                 <span class="cmt">(* f : 'a -&gt; 'b t  — returns a PROMISE *)</span>
+  let r = { state = Waiting [] } in
+<span class="hl">  on_resolve p (fun v -&gt;               (* 1. wait for p : 'a *)</span>
+<span class="hl">    on_resolve (f v) (wakeup r));      (* 2. then wait for (f v), copy into r *)</span>
+  r
+
+<span class="cmt">(* for contrast — map (not in the file): g : 'a -&gt; 'b, a VALUE *)</span>
+let map g p =
+  let r = { state = Waiting [] } in
+  on_resolve p (fun v -&gt; wakeup r (g v));    <span class="cmt">(* ONE wait: g v is ready *)</span>
+  r</code></pre>
+      <ul>
+        <li>Two promises to await in turn: first <code class="inl">p</code>, then the promise that <code class="inl">f v</code> itself returns. <span class="em">One <code class="inl">on_resolve</code> each.</span></li>
+        <li>The second one is the monadic <span class="em">flatten</span>: it forwards <code class="inl">f v</code>'s eventual value into the placeholder <code class="inl">r</code>.</li>
+        <li><code class="inl">map</code> needs only one — <code class="inl">g v</code> is a plain value. Functor (1 level) vs monad (2 levels).</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="kicker">OCaml 5 effects — the mechanism</div>
+      <h2>Enter effects</h2>
+      <pre><code class="block">type _ Effect.t += Await : 'a t -&gt; 'a Effect.t | Yield : unit Effect.t
 
 let await p = match p.state with
   | Done v -&gt; v
-  | Waiting _ -&gt; Effect.perform (Await p)     <span class="cmt">(* suspend the fiber *)</span>
+  | Waiting _ -&gt; Effect.perform (Await p)     <span class="cmt">(* suspend the fiber *)</span></code></pre>
+      <ul>
+        <li><code class="inl">perform</code> suspends the current fiber and hands its continuation <code class="inl">k</code> to the enclosing handler.</li>
+        <li>The handler parks <code class="inl">k</code> as a waiter and re-enqueues it once the awaited promise resolves; resuming <code class="inl">k</code> re-enters under the same handler.</li>
+      </ul>
+    </section>
 
-<span class="cmt">(* since OCaml 5.3, a handler is just a match: *)</span>
-match compute () with
-| v            -&gt; ...    <span class="cmt">(* normal result *)</span>
-| effect E, k  -&gt; ...    <span class="cmt">(* effect E, with its continuation k *)</span></code></pre>
-    <p class="caption"><code class="inl">perform</code> hands the continuation <code class="inl">k</code> to the enclosing handler; resuming <code class="inl">k</code> re-enters the computation under that same handler.</p>
-  </section>
-
-  <section>
-    <div class="kicker">OCaml 5 effects — running fibers</div>
-    <h2>The effect <code class="inl" style="font-size:.7em">run</code></h2>
-    <pre class="small"><code class="block">let run main =                       <span class="cmt">(* run : (unit -&gt; 'a t) -&gt; 'a *)</span>
+    <section>
+      <div class="kicker">OCaml 5 effects — running fibers</div>
+      <h2>The effect <code class="inl" style="font-size:.7em">run</code></h2>
+      <pre class="small"><code class="block">let run main =                       <span class="cmt">(* run : (unit -&gt; 'a t) -&gt; 'a *)</span>
   let result = ref None in
   let fiber () =
     match result := Some (await (main ())) with
@@ -224,136 +477,185 @@ match compute () with
   Queue.add fiber ready;
   loop ();                           <span class="cmt">(* the SAME ready/timers loop as V1 *)</span>
   match !result with Some v -&gt; v | None -&gt; failwith "run: deadlock"</code></pre>
-    <ul>
-      <li>The three <code class="inl">match</code> cases <span class="em">are</span> the whole handler — no <code class="inl">{ retc; exnc; effc }</code> record, no GADT annotation.</li>
-      <li>Same loop as V1; only a <span class="em">fiber wrapper</span> around <code class="inl">main</code> is added.</li>
-      <li>It takes <code class="inl">unit -&gt; 'a t</code>, not <code class="inl">'a t</code>: the awaits must happen <span class="em">inside</span> the fiber.</li>
-    </ul>
-  </section>
+      <ul>
+        <li>Same loop as V1; the only additions are the <span class="em">handler</span> and a <span class="em">fiber wrapper</span> around <code class="inl">main</code>.</li>
+        <li>It takes <code class="inl">unit -&gt; 'a t</code>, not <code class="inl">'a t</code>: the awaits must happen
+          <span class="em">inside</span> the fiber.</li>
+      </ul>
+    </section>
 
-  <section>
-    <div class="kicker">Version 2 — effects, broken</div>
-    <h2 style="color:var(--warn)">It breaks the semantics <span class="tag" style="color:#b06b66">minilwt_eff_break.ml</span></h2>
-    <pre><code class="block"><span class="hl" style="border-color:var(--warn);background:rgba(255,123,114,.14)">let bind p f = f (await p)</span></code></pre>
-    <ul>
-      <li>Tempting: the <span class="em">shortest</span> possible bind, and the native stack survives the <code class="inl">await</code>.</li>
-      <li class="warn">But on a pending promise <code class="inl">await</code> <span class="emw">suspends the whole fiber</span>: <code class="inl">bind</code> does not return until <code class="inl">p</code> resolves.</li>
-      <li class="warn"><code class="inl">both (a &gt;&gt;= f) (b &gt;&gt;= g)</code> cannot start <code class="inl">b</code> until <code class="inl">a</code> is done — the branches run <span class="emw">in series</span>.</li>
-    </ul>
-  </section>
+    <section>
+      <div class="kicker">Version 2 — effects, broken</div>
+      <h2 style="color:var(--warn)">It breaks the semantics <span class="tag"
+          style="color:#b06b66">minilwt_eff_break.ml</span></h2>
+      <pre><code class="block"><span class="hl" style="border-color:var(--warn);background:rgba(255,123,114,.14)">let bind p f = f (await p)</span></code></pre>
+      <ul>
+        <li>Tempting: the <span class="em">shortest</span> possible bind, and the native stack survives the <code
+            class="inl">await</code>.</li>
+        <li class="warn">But on a pending promise <code class="inl">await</code> <span class="emw">suspends the whole
+            fiber</span>: <code class="inl">bind</code> does not return until <code class="inl">p</code> resolves.</li>
+        <li class="warn"><code class="inl">both (a &gt;&gt;= f) (b &gt;&gt;= g)</code> cannot start <code
+            class="inl">b</code> until <code class="inl">a</code> is done — the branches run <span class="emw">in
+            series</span>.</li>
+      </ul>
+    </section>
 
-  <section>
-    <div class="kicker">The bug, on the clock</div>
-    <h2>Same program, two timings</h2>
-    <p class="caption"><code class="inl">both (task "a" 0.15) (task "b" 0.15)</code> — two tasks that each <code class="inl">sleep</code> then print.</p>
-    <div class="bars">
-      <div class="bar">
-        <span class="lab">V1 &amp; V3 (preserved)</span>
-        <div class="track"><div class="fill good" style="width:33%">0.15 s — concurrent</div></div>
+    <section>
+      <div class="kicker">The bug, on the clock</div>
+      <h2>Same program, two timings</h2>
+      <pre class="small"><code class="block">let task label d =
+  let* () = sleep d in Printf.printf "%s done\n" label; return ()
+let both a b = let* () = a in let* () = b in return ()
+
+run (fun () -&gt; both (task "a" 0.15) (task "b" 0.15))</code></pre>
+      <div class="bars">
+        <div class="bar">
+          <span class="lab">V1 &amp; V3 (preserved)</span>
+          <div class="track">
+            <div class="fill good" style="width:33%">0.15 s — concurrent</div>
+          </div>
+        </div>
+        <div class="bar">
+          <span class="lab">V2 (broken)</span>
+          <div class="track">
+            <div class="fill bad" style="width:66%">0.30 s — serialised</div>
+          </div>
+        </div>
       </div>
-      <div class="bar">
-        <span class="lab">V2 (broken)</span>
-        <div class="track"><div class="fill bad" style="width:66%">0.30 s — serialised</div></div>
-      </div>
-    </div>
-    <p class="caption">The wall-clock gap <em>is</em> the lost concurrency, made visible.</p>
-  </section>
+      <p class="caption">Both <code class="inl">task</code> calls run (starting both timers) before <code class="inl">both</code> does — <em>unless</em> <code class="inl">bind</code> suspends on the first <code class="inl">await</code>. That single difference is the whole gap.</p>
+    </section>
 
-  <section>
-    <div class="kicker">Version 3 — effects, preserved</div>
-    <h2 style="color:var(--accent)">Semantics preserved <span class="tag" style="color:#5f8f66">minilwt_eff_keep.ml — "mbind"</span></h2>
-    <pre><code class="block"><span class="cmt">(* same effect machinery as V2, but bind is V1's, byte for byte *)</span>
+    <section>
+      <div class="kicker">Version 3 — effects, preserved</div>
+      <h2 style="color:var(--accent)">Semantics preserved <span class="tag" style="color:#5f8f66">minilwt_eff_keep.ml —
+          "mbind"</span></h2>
+      <pre><code class="block"><span class="cmt">(* same effect machinery as V2, but bind is V1's, byte for byte *)</span>
 let bind p f =
   let r = { state = Waiting [] } in
 <span class="hl">  on_resolve p (fun v -&gt; on_resolve (f v) (wakeup r));</span>
   r</code></pre>
-    <ul>
-      <li class="ok">Non-blocking again → concurrency preserved: <code class="inl">both</code> is back to <span class="em">0.15 s</span>.</li>
-      <li class="ok"><code class="inl">await</code> is still there as an <span class="em">opt-in direct-style escape hatch</span> (loops, native <code class="inl">try/with</code>, real backtraces) that <code class="inl">bind</code> never uses.</li>
-    </ul>
-  </section>
+      <ul>
+        <li class="ok">Non-blocking again → concurrency preserved: <code class="inl">both</code> is back to <span
+            class="em">0.15 s</span>.</li>
+        <li class="ok"><code class="inl">await</code> is still there as an <span class="em">opt-in direct-style escape
+            hatch</span> (loops, native <code class="inl">try/with</code>, real backtraces) that <code
+            class="inl">bind</code> never uses.</li>
+      </ul>
+    </section>
 
-  <section>
-    <div class="kicker">The whole point</div>
-    <h2>Side by side</h2>
-    <div class="cols">
-      <div class="keep">
-        <h3>V1 classic = V3 preserved</h3>
-        <pre class="small"><code class="block">let bind p f =
+    <section>
+      <div class="kicker">The whole point</div>
+      <h2>Side by side</h2>
+      <div class="cols">
+        <div class="keep">
+          <h3>V1 classic = V3 preserved</h3>
+          <pre class="small"><code class="block">let bind p f =
   let r = { state = Waiting [] } in
   on_resolve p (fun v -&gt;
     on_resolve (f v) (wakeup r));
   r</code></pre>
-      </div>
-      <div class="break">
-        <h3>V2 broken</h3>
-        <pre class="small"><code class="block">let bind p f = f (await p)
+        </div>
+        <div class="break">
+          <h3>V2 broken</h3>
+          <pre class="small"><code class="block">let bind p f = f (await p)
 
 
 <span class="cmt">(* short, but serialises *)</span></code></pre>
+        </div>
       </div>
-    </div>
-    <table>
-      <tr><th></th><th>V1 classic</th><th>V2 broken</th><th>V3 preserved</th></tr>
-      <tr><td>bind</td><td>callback</td><td><code class="inl">f (await p)</code></td><td>callback (= V1)</td></tr>
-      <tr><td>implicit concurrency</td><td class="y">preserved</td><td class="n">broken</td><td class="y">preserved</td></tr>
-      <tr><td><code class="inl">run</code></td><td><code class="inl">'a t -&gt; 'a</code></td><td><code class="inl">(unit -&gt; 'a t) -&gt; 'a</code></td><td><code class="inl">(unit -&gt; 'a t) -&gt; 'a</code></td></tr>
-      <tr><td>direct-style <code class="inl">await</code></td><td>no</td><td>it <em>is</em> bind</td><td>opt-in</td></tr>
-    </table>
-  </section>
+      <table>
+        <tr>
+          <th></th>
+          <th>V1 classic</th>
+          <th>V2 broken</th>
+          <th>V3 preserved</th>
+        </tr>
+        <tr>
+          <td>bind</td>
+          <td>callback</td>
+          <td><code class="inl">f (await p)</code></td>
+          <td>callback (= V1)</td>
+        </tr>
+        <tr>
+          <td>implicit concurrency</td>
+          <td class="y">preserved</td>
+          <td class="n">broken</td>
+          <td class="y">preserved</td>
+        </tr>
+        <tr>
+          <td><code class="inl">run</code></td>
+          <td><code class="inl">'a t -&gt; 'a</code></td>
+          <td><code class="inl">(unit -&gt; 'a t) -&gt; 'a</code></td>
+          <td><code class="inl">(unit -&gt; 'a t) -&gt; 'a</code></td>
+        </tr>
+        <tr>
+          <td>direct-style <code class="inl">await</code></td>
+          <td>no</td>
+          <td>it <em>is</em> bind</td>
+          <td>opt-in</td>
+        </tr>
+      </table>
+    </section>
 
-  <section>
-    <div class="kicker">Takeaways</div>
-    <h2>What the three teach</h2>
-    <ul>
-      <li class="ok">The <span class="em">preserving</span> effect <code class="inl">bind</code> <em>is</em> the classic <code class="inl">bind</code>. Effects don't replace the monad — they add a direct-style <code class="inl">await</code> and a lean scheduler underneath.</li>
-      <li class="warn">The one-liner <code class="inl">bind = f (await p)</code> is seductive but <span class="emw">silently changes what a program means</span>.</li>
-      <li>The monadic type <code class="inl">'a t</code> keeps marking async in the signature — the thing Lwt users rely on.</li>
-      <li>This is the boiled-down model of a larger experiment: a full effects-based Lwt core with an <span class="em">io_uring</span> back end.</li>
-    </ul>
-  </section>
+    <section>
+      <div class="kicker">Takeaways</div>
+      <h2>What the three teach</h2>
+      <ul>
+        <li class="ok">The <span class="em">preserving</span> effect <code class="inl">bind</code> <em>is</em> the
+          classic <code class="inl">bind</code>. Effects don't replace the monad — they add a direct-style <code
+            class="inl">await</code> and a lean scheduler underneath.</li>
+        <li class="warn">The one-liner <code class="inl">bind = f (await p)</code> is seductive but <span
+            class="emw">silently changes what a program means</span>.</li>
+        <li>The monadic type <code class="inl">'a t</code> keeps marking async in the signature — the thing Lwt users
+          rely on.</li>
+        <li>This is the boiled-down model of a larger experiment: a full effects-based Lwt core with an <span
+            class="em">io_uring</span> back end.</li>
+      </ul>
+    </section>
 
-  <section>
-    <div class="kicker">Try it</div>
-    <h2>Run it yourself</h2>
-    <pre><code class="block">cat minilwt.ml            demo.ml     | ocaml -I +unix unix.cma -stdin
+    <section>
+      <div class="kicker">Try it</div>
+      <h2>Run it yourself</h2>
+      <pre><code class="block">cat minilwt.ml            demo.ml     | ocaml -I +unix unix.cma -stdin
 cat minilwt_eff_keep.ml   demo_eff.ml | ocaml -I +unix unix.cma -stdin
 cat minilwt_eff_break.ml  demo_eff.ml | ocaml -I +unix unix.cma -stdin</code></pre>
-    <ul>
-      <li>No build system on purpose — the point is the single file.</li>
-      <li><code class="inl">ocaml a.ml b.ml</code> won't do: the toplevel runs only the first file and passes the rest as argv. Hence the concatenate-and-pipe form.</li>
-    </ul>
-  </section>
+      <ul>
+        <li>No build system on purpose — the point is the single file.</li>
+        <li><code class="inl">ocaml a.ml b.ml</code> won't do: the toplevel runs only the first file and passes the rest
+          as argv. Hence the concatenate-and-pipe form.</li>
+      </ul>
+    </section>
 
-</main>
-<div class="counter" id="counter"></div>
-<div class="hint">← → · space · f = fullscreen</div>
-<script>
-  const slides = Array.from(document.querySelectorAll('section'));
-  let i = 0;
-  const progress = document.getElementById('progress');
-  const counter = document.getElementById('counter');
-  function show(n) {
-    i = Math.max(0, Math.min(slides.length - 1, n));
-    slides.forEach((s, k) => s.classList.toggle('active', k === i));
-    progress.style.width = ((i + 1) / slides.length * 100) + '%';
-    counter.textContent = (i + 1) + ' / ' + slides.length;
-    location.hash = i + 1;
-  }
-  function next() { show(i + 1); }
-  function prev() { show(i - 1); }
-  document.addEventListener('keydown', e => {
-    switch (e.key) {
-      case 'ArrowRight': case 'PageDown': case ' ': next(); e.preventDefault(); break;
-      case 'ArrowLeft': case 'PageUp': prev(); e.preventDefault(); break;
-      case 'Home': show(0); break;
-      case 'End': show(slides.length - 1); break;
-      case 'f': if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); break;
+  </main>
+  <div class="counter" id="counter"></div>
+  <div class="hint">← → · space · f = fullscreen</div>
+  <script>
+    const slides = Array.from(document.querySelectorAll('section'));
+    let i = 0;
+    const progress = document.getElementById('progress');
+    const counter = document.getElementById('counter');
+    function show(n) {
+      i = Math.max(0, Math.min(slides.length - 1, n));
+      slides.forEach((s, k) => s.classList.toggle('active', k === i));
+      progress.style.width = ((i + 1) / slides.length * 100) + '%';
+      counter.textContent = (i + 1) + ' / ' + slides.length;
+      location.hash = i + 1;
     }
-  });
-  document.addEventListener('click', e => { if (!e.target.closest('a')) next(); });
-  const start = parseInt(location.hash.slice(1));
-  show(Number.isFinite(start) && start > 0 ? start - 1 : 0);
-</script>
+    function next() { show(i + 1); }
+    function prev() { show(i - 1); }
+    document.addEventListener('keydown', e => {
+      switch (e.key) {
+        case 'ArrowRight': case 'PageDown': case ' ': next(); e.preventDefault(); break;
+        case 'ArrowLeft': case 'PageUp': prev(); e.preventDefault(); break;
+        case 'Home': show(0); break;
+        case 'End': show(slides.length - 1); break;
+        case 'f': if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); break;
+      }
+    });
+    document.addEventListener('click', e => { if (!e.target.closest('a')) next(); });
+    const start = parseInt(location.hash.slice(1));
+    show(Number.isFinite(start) && start > 0 ? start - 1 : 0);
+  </script>
 </body>
+
 </html>
